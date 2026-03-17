@@ -154,6 +154,47 @@ def cmd_rollback(args):
 
 
 
+
+def cmd_intake_dir(args):
+    import subprocess
+    from pathlib import Path
+    from core.glossary import init_glossary, add_from_sidecar
+    target = Path(args.directory).expanduser().resolve()
+    if not target.exists():
+        print(f'ERROR: directory not found: {target}')
+        return
+    excludes = {'.git', '__pycache__', 'site', '.db', 'rolodex'}
+    files = [
+        f for f in target.rglob('*')
+        if f.is_file()
+        and not any(ex in str(f) for ex in excludes)
+        and not f.name.endswith('.pyc')
+    ]
+    print(f'Found {len(files)} files in {target}')
+    print(f'Pool  : {args.pool}')
+    print(f'State : {args.state}')
+    print()
+    ok = fail = 0
+    for f in files:
+        desc = args.desc or str(f.relative_to(target))
+        result = subprocess.run(
+            f'usys intake "{f}" "{args.pool}" "{args.state}" "{desc}"',
+            shell=True, capture_output=True, text=True,
+            executable='/usr/bin/zsh'
+        )
+        if 'Sidecar' in result.stdout or 'Registering' in result.stdout:
+            ok += 1
+            print(f'  [OK] {f.name}')
+        else:
+            fail += 1
+            print(f'  [FAIL] {f.name}: {result.stderr.strip()[:60]}')
+    print()
+    print(f'Intake complete -- {ok} OK, {fail} failed')
+    print('Syncing glossary...')
+    init_glossary()
+    imported = sum(1 for s in Path(args.pool).rglob('*.sidecar.json') if add_from_sidecar(str(s)))
+    print(f'Glossary -- {imported} entries')
+
 def cmd_gloss(args):
     from core.glossary import (init_glossary, list_entries, get_entry,
                                 amend, check_evictions, list_categories)
@@ -323,6 +364,14 @@ def main():
 
     pg_cats = gloss_sub.add_parser('categories', help='List all categories')
     pg_cats.set_defaults(func=cmd_gloss)
+
+    # intake-dir
+    p_intake_dir = sub.add_parser('intake-dir', help='Intake entire directory into clonepool')
+    p_intake_dir.add_argument('directory',         help='Directory to intake')
+    p_intake_dir.add_argument('--pool',  default='/mnt/d/clonepool', help='Pool path')
+    p_intake_dir.add_argument('--state', default='white',            help='white/grey/black')
+    p_intake_dir.add_argument('--desc',  default='',                 help='Description prefix')
+    p_intake_dir.set_defaults(func=cmd_intake_dir)
     args = parser.parse_args()
     args.func(args)
 
